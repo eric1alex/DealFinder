@@ -1,0 +1,5 @@
+{
+  "name": "Deal Finder",
+  "description": "An elegant and fast deal aggregator application that displays the latest deals from top e-commerce sites. Users can filter, sort, and search for the best offers on a variety of products.",
+  "requestFramePermissions": []
+}
