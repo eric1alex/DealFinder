@@ -1,121 +1,108 @@
-from sqlalchemy.orm import Session
-from . import schemas
-import random
-import datetime
+import motor.motor_asyncio
+from bson import ObjectId
 from typing import List, Optional
+import datetime
 
-# --- Mock Database ---
+from . import schemas
 
-# This will be our mock 'deals' table
-MOCK_DB_DEALS: List[schemas.Deal] = []
-# This will be our mock sequence for IDs
-MOCK_DB_ID_SEQ = 0
-
-# A simple class to mimic the SQLAlchemy Deal model object
-class MockDealModel:
-    def __init__(self, **kwargs):
-        global MOCK_DB_ID_SEQ
-        MOCK_DB_ID_SEQ += 1
-        self.id = MOCK_DB_ID_SEQ
-        self.created_at = datetime.datetime.utcnow()
-        self.clicks = 0
-
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+# --- Helper function to get the 'deals' collection ---
+def get_deals_collection(db: motor.motor_asyncio.AsyncIOMotorDatabase):
+    return db["deals"]
 
 # --- CRUD Functions ---
 
-def get_deal(db: Session, deal_id: int) -> Optional[MockDealModel]:
-    """Gets a single deal by ID from the mock DB."""
-    for deal in MOCK_DB_DEALS:
-        if deal.id == deal_id:
-            return deal
+async def get_deal(db: motor.motor_asyncio.AsyncIOMotorDatabase, deal_id: str) -> Optional[schemas.Deal]:
+    """Gets a single deal by its MongoDB ObjectId."""
+    if not ObjectId.is_valid(deal_id):
+        return None
+    deal = await get_deals_collection(db).find_one({"_id": ObjectId(deal_id)})
+    if deal:
+        return schemas.Deal(**deal)
     return None
 
-def get_deals(db: Session, skip: int = 0, limit: int = 10, filter_by_category: Optional[str] = None, sort_by: Optional[str] = None) -> List[MockDealModel]:
-    """Gets a list of deals from the mock DB with filtering and sorting."""
-    deals = list(MOCK_DB_DEALS) # Make a copy
-
+async def get_deals(
+    db: motor.motor_asyncio.AsyncIOMotorDatabase,
+    skip: int = 0,
+    limit: int = 10,
+    filter_by_category: Optional[str] = None,
+    sort_by: Optional[str] = None
+) -> List[schemas.Deal]:
+    """Gets a list of deals with filtering, sorting, and pagination."""
+    query = {}
     if filter_by_category:
-        deals = [d for d in deals if d.category == filter_by_category]
+        query["category"] = filter_by_category
 
+    sort_options = []
     if sort_by:
-        # Sort price ascending, everything else (discount, clicks) descending
-        reverse = True
+        direction = -1  # Descending for discount, clicks, etc.
         if sort_by == 'price':
-            reverse = False
+            direction = 1  # Ascending for price
+        sort_options.append((sort_by, direction))
 
-        deals = sorted(deals, key=lambda d: getattr(d, sort_by, 0), reverse=reverse)
+    cursor = get_deals_collection(db).find(query).skip(skip).limit(limit)
+    if sort_options:
+        cursor = cursor.sort(sort_options)
 
-    return deals[skip:limit]
+    deals = await cursor.to_list(length=limit)
+    return [schemas.Deal(**deal) for deal in deals]
 
-def get_deal_by_product_id(db: Session, product_id: str, source: str) -> Optional[MockDealModel]:
+async def get_deal_by_product_id(db: motor.motor_asyncio.AsyncIOMotorDatabase, product_id: str, source: str) -> Optional[schemas.Deal]:
     """Finds a deal by its product ID and source."""
-    for deal in MOCK_DB_DEALS:
-        if deal.product_id == product_id and deal.source == source:
-            return deal
+    deal = await get_deals_collection(db).find_one({"product_id": product_id, "source": source})
+    if deal:
+        return schemas.Deal(**deal)
     return None
 
-def create_deal(db: Session, deal: schemas.DealCreate) -> MockDealModel:
-    """Creates a new deal in the mock DB."""
-    db_deal = MockDealModel(**deal.dict())
-    MOCK_DB_DEALS.append(db_deal)
-    return db_deal
+async def create_deal(db: motor.motor_asyncio.AsyncIOMotorDatabase, deal: schemas.DealCreate) -> schemas.Deal:
+    """Creates a new deal in the database."""
+    deal_data = deal.dict()
+    deal_data["created_at"] = datetime.datetime.utcnow()
+    deal_data["clicks"] = 0
 
-def update_deal(db: Session, db_deal: MockDealModel, deal_update: schemas.DealCreate) -> MockDealModel:
-    """Updates an existing deal in the mock DB."""
-    for key, value in deal_update.dict().items():
-        setattr(db_deal, key, value)
-    # In a real scenario, you might want to update the 'created_at' or add an 'updated_at' field.
-    # For now, we'll just update the fields.
-    return db_deal
+    result = await get_deals_collection(db).insert_one(deal_data)
+    new_deal = await get_deals_collection(db).find_one({"_id": result.inserted_id})
+    return schemas.Deal(**new_deal)
 
-def search_deals(db: Session, query: str) -> List[MockDealModel]:
-    """Searches for deals in the mock DB by title."""
-    return [d for d in MOCK_DB_DEALS if query.lower() in d.title.lower()]
+async def update_deal(db: motor.motor_asyncio.AsyncIOMotorDatabase, existing_deal: schemas.Deal, deal_update: schemas.DealCreate) -> Optional[schemas.Deal]:
+    """Updates an existing deal with fresh data from the pipeline."""
+    update_data = deal_update.dict(exclude_unset=True)
 
-def get_categories(db: Session) -> List[dict]:
-    """Gets a list of categories and their counts from the mock DB."""
-    categories = {}
-    for deal in MOCK_DB_DEALS:
-        cat = deal.category
-        categories[cat] = categories.get(cat, 0) + 1
-    return [{"category": k, "count": v} for k, v in categories.items()]
+    await get_deals_collection(db).update_one(
+        {"_id": existing_deal.id}, {"$set": update_data}
+    )
 
-def increment_click(db: Session, deal_id: int) -> Optional[MockDealModel]:
+    updated_deal = await get_deals_collection(db).find_one({"_id": existing_deal.id})
+    if updated_deal:
+        return schemas.Deal(**updated_deal)
+    return None
+
+async def search_deals(db: motor.motor_asyncio.AsyncIOMotorDatabase, query: str) -> List[schemas.Deal]:
+    """Searches for deals by title using a case-insensitive regex."""
+    # For better performance in production, a text index should be created on the title field.
+    deals_cursor = get_deals_collection(db).find({"title": {"$regex": query, "$options": "i"}})
+    deals = await deals_cursor.to_list(length=100)
+    return [schemas.Deal(**deal) for deal in deals]
+
+async def get_categories(db: motor.motor_asyncio.AsyncIOMotorDatabase) -> List[schemas.Category]:
+    """Gets a list of categories and their counts using the aggregation framework."""
+    pipeline = [
+        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]
+    categories_cursor = get_deals_collection(db).aggregate(pipeline)
+    categories = await categories_cursor.to_list(length=None)
+    return [schemas.Category(**cat) for cat in categories]
+
+async def increment_click(db: motor.motor_asyncio.AsyncIOMotorDatabase, deal_id: str) -> Optional[schemas.Deal]:
     """Increments the click count for a deal."""
-    db_deal = get_deal(db, deal_id)
-    if db_deal:
-        db_deal.clicks += 1
-    return db_deal
+    if not ObjectId.is_valid(deal_id):
+        return None
 
-# --- Mock DB Population ---
-def populate_mock_db():
-    """Helper to pre-populate the mock DB for testing."""
-    if MOCK_DB_DEALS: return # Don't populate twice
-
-    categories = ["electronics", "fashion", "home", "books"]
-    sources = ["amazon", "flipkart"]
-
-    for i in range(50):
-        original_price = round(random.uniform(500, 8000), 2)
-        discount = round(random.uniform(0.1, 0.7), 2)
-        source = random.choice(sources)
-
-        deal_data = {
-            "product_id": f"MOCK{i}{source.upper()}",
-            "title": f"Mock Product Title {i} for {source}",
-            "image": f"https://example.com/image{i}.jpg",
-            "price": round(original_price * (1 - discount), 2),
-            "original_price": original_price,
-            "discount": round(discount * 100, 2),
-            "url": f"https://example.com/deal/{i}?tag=mocktag-21",
-            "source": source,
-            "category": random.choice(categories),
-            "reddit_post_id": f"t3_mock{i}",
-        }
-        deal_schema = schemas.DealCreate(**deal_data)
-        create_deal(None, deal_schema)
-
-# Populate the DB when the module is loaded
-populate_mock_db()
+    result = await get_deals_collection(db).find_one_and_update(
+        {"_id": ObjectId(deal_id)},
+        {"$inc": {"clicks": 1}},
+        return_document=motor.motor_asyncio.core.pymongo.ReturnDocument.AFTER
+    )
+    if result:
+        return schemas.Deal(**result)
+    return None

@@ -1,32 +1,30 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, BigInteger, UniqueConstraint
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-import datetime
+import motor.motor_asyncio
+from .config import settings
 
-DATABASE_URL = "postgresql://user:password@localhost/dbname"
+class DataBase:
+    client: motor.motor_asyncio.AsyncIOMotorClient = None
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+db = DataBase()
 
-class Deal(Base):
-    __tablename__ = "deals"
+def get_database() -> motor.motor_asyncio.AsyncIOMotorDatabase:
+    return db.client[settings.MONGODB_DBNAME]
 
-    id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(String, index=True, nullable=False)
-    title = Column(String, index=True)
-    image = Column(String)
-    price = Column(Float)
-    original_price = Column(Float)
-    discount = Column(Float)
-    url = Column(String, unique=True)
-    source = Column(String, index=True, nullable=False)
-    category = Column(String, index=True)
-    reddit_post_id = Column(String, unique=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    clicks = Column(BigInteger, default=0)
+async def connect_to_mongo():
+    """Connect to MongoDB."""
+    print("Connecting to MongoDB...")
+    db.client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGODB_URL)
+    # Ping the server to check the connection.
+    try:
+        await db.client.admin.command('ping')
+        print("Successfully connected to MongoDB.")
+    except Exception as e:
+        print(f"Could not connect to MongoDB: {e}")
+        # In a real app, you might want to exit or handle this more gracefully
+        raise e
 
-    __table_args__ = (UniqueConstraint('product_id', 'source', name='_product_source_uc'),)
 
-def create_tables():
-    Base.metadata.create_all(bind=engine)
+async def close_mongo_connection():
+    """Close MongoDB connection."""
+    print("Closing MongoDB connection.")
+    db.client.close()
+    print("MongoDB connection closed.")
