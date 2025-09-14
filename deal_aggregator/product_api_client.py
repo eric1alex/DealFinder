@@ -1,8 +1,5 @@
 import random
-
-# --- Mock Affiliate Tags ---
-AMAZON_AFFILIATE_TAG = "yourtag-21"
-FLIPKART_AFFILIATE_ID = "youraffid"
+from .config import settings
 
 # --- Mock API Functions ---
 
@@ -51,16 +48,16 @@ def rewrite_affiliate_link(url: str, source: str):
     if source == "amazon":
         # Check if the URL already has a query string
         if '?' in url:
-            return f"{url}&tag={AMAZON_AFFILIATE_TAG}"
+            return f"{url}&tag={settings.AMAZON_AFFILIATE_TAG}"
         else:
-            return f"{url}?tag={AMAZON_AFFILIATE_TAG}"
+            return f"{url}?tag={settings.AMAZON_AFFILIATE_TAG}"
     elif source == "flipkart":
         # Flipkart affiliate links are usually rewritten completely
         # For simplicity, we'll just append an affiliate ID
         if '?' in url:
-            return f"{url}&affid={FLIPKART_AFFILIATE_ID}"
+            return f"{url}&affid={settings.FLIPKART_AFFILIATE_ID}"
         else:
-            return f"{url}?affid={FLIPKART_AFFILIATE_ID}"
+            return f"{url}?affid={settings.FLIPKART_AFFILIATE_ID}"
     return url
 
 # --- Main Enrichment Function ---

@@ -1,33 +1,24 @@
 import praw
 import re
-import os
+from .config import settings
 
 # --- Constants ---
-# It's better to use environment variables for credentials for security.
-REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "your_client_id")
-REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "your_client_secret")
-REDDIT_USER_AGENT = os.environ.get("REDDIT_USER_AGENT", "your_user_agent")
-
 AMAZON_REGEX = r"https?://(?:www\.)?amazon\.in/.*?/dp/([A-Z0-9]{10})"
 FLIPKART_REGEX = r"https?://(?:www\.)?flipkart\.com/.*?/p/.*?pid=([A-Z0-9]+)"
 
 # --- PRAW Client Initialization ---
 def get_reddit_client():
     """Initializes and returns a PRAW Reddit client instance."""
-    # This will raise an exception if credentials are not set, which is fine
-    # as the app shouldn't run without them. A more robust implementation
-    # might handle this more gracefully.
-    if REDDIT_CLIENT_ID == "your_client_id":
-        # This will prevent the app from running with default placeholder values
-        # In a real scenario, we'd log an error and exit.
-        # For this implementation, we'll return None to avoid crashing.
-        print("Warning: Reddit API credentials are not set. Reddit ingestion will be skipped.")
+    # The default value is set in config.py. If the user hasn't created a .env file,
+    # the client_id will be the default "your_client_id".
+    if settings.REDDIT_CLIENT_ID == "your_client_id":
+        print("Warning: Reddit API credentials are not set in the .env file. Reddit ingestion will be skipped.")
         return None
 
     return praw.Reddit(
-        client_id=REDDIT_CLIENT_ID,
-        client_secret=REDDIT_CLIENT_SECRET,
-        user_agent=REDDIT_USER_AGENT,
+        client_id=settings.REDDIT_CLIENT_ID,
+        client_secret=settings.REDDIT_CLIENT_SECRET,
+        user_agent=settings.REDDIT_USER_AGENT,
     )
 
 # --- Deal Extraction Logic ---
